@@ -1,5 +1,6 @@
 use std::io;
 use std::path::Path;
+use std::time;
 
 use clap::Arg;
 use failure::bail;
@@ -51,6 +52,7 @@ fn main() -> Result<(), failure::Error> {
 
     let mtime_before = metadata_before
         .as_ref()
+        // errors only for unsupported platforms, apparently
         .and_then(|m| m.modified().ok())
         .map(|t| chrono::DateTime::<chrono::Utc>::from(t))
         // discard mtimes in the future, which are generally unexpected
@@ -76,13 +78,8 @@ fn main() -> Result<(), failure::Error> {
     let mut req = ureq::get(url);
     req.redirects(10);
 
-    if let Some(metadata) = metadata_before {
-        // errors only for unsupported platforms, apparently
-        if let Ok(mtime) = metadata.modified() {
-            let mtime = chrono::DateTime::<chrono::Utc>::from(mtime);
-            let file_modified = mtime.to_rfc2822();
-            req.set("If-Modified-Since", &file_modified);
-        }
+    if let Some(mtime) = mtime_before {
+        req.set("If-Modified-Since", &mtime.to_rfc2822());
     }
 
     if let Some(headers) = matches.values_of("headers") {
@@ -93,13 +90,17 @@ fn main() -> Result<(), failure::Error> {
                     header
                 )
             })?;
-            let (before, mut after) = header.split_at(colon);
 
-            if after.len() > 1 {
-                after = &after[2..];
+            let (key, mut value) = header.split_at(colon);
+
+            // colon
+            value = &value[1..];
+
+            if value.starts_with(' ') {
+                value = &value[1..];
             }
 
-            req.set(before, after);
+            req.set(key, value);
         }
     }
 
@@ -117,12 +118,28 @@ fn main() -> Result<(), failure::Error> {
         _ => bail!("unexpected response: {:?}", response.status_line()),
     }
 
+    let server_date = if let Some(server_modified) = response.header("Last-Modified") {
+        chrono::DateTime::parse_from_rfc2822(server_modified)
+            .ok()
+            .map(time::SystemTime::from)
+    } else {
+        None
+    };
+
     io::copy(&mut response.into_reader(), &mut temp).with_context(|_| err_msg("downloading"))?;
 
     temp.flush()
         .with_context(|_| err_msg("completing download"))?;
 
     let temp = temp.into_inner().expect("just flushed");
+
+    if let Some(server_date) = server_date {
+        let _ = filetime::set_file_handle_times(
+            temp.as_ref(),
+            None,
+            Some(filetime::FileTime::from(server_date)),
+        );
+    }
 
     match temp.persist_by_rename(output) {
         Ok(()) => (),

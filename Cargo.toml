@@ -7,6 +7,7 @@ edition = "2018"
 [dependencies]
 chrono = "0.4"
 clap = "2"
+filetime = "0.2"
 tempfile-fast = "0.3"
 ureq = "0.11"
 
