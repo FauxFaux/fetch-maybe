@@ -10,6 +10,8 @@ clap = "2"
 filetime = "0.2"
 tempfile-fast = "0.3"
 ureq = "0.11"
+pretty_env_logger = "0.3"
+log = "0.4.8"
 
 [dependencies.failure]
 version = "0.1"
